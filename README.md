@@ -14,7 +14,7 @@ archives are published at https://geth.ethereum.org/downloads/.
 
 ## API documentation
 
-[URL:](https://etclabscore.github.io/core-geth/JSON-RPC-API/)
+[JSON-RPC-API documentation:](https://etclabscore.github.io/core-geth/JSON-RPC-API/)
 
 ## Building the source
 
