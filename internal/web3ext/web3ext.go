@@ -251,8 +251,26 @@ web3._extend({
 		new web3._extend.Method({
 			name: 'dumpBlock',
 			call: 'debug_dumpBlock',
+			params: 2,
+			inputFormatter: [web3._extend.formatters.inputBlockNumberFormatter, null]
+		}),
+		new web3._extend.Method({
+			name: 'privateStateRoot',
+			call: 'debug_privateStateRoot',
 			params: 1,
 			inputFormatter: [web3._extend.formatters.inputBlockNumberFormatter]
+		}),
+		new web3._extend.Method({
+			name: 'defaultStateRoot',
+			call: 'debug_defaultStateRoot',
+			params: 1,
+			inputFormatter: [web3._extend.formatters.inputBlockNumberFormatter]
+		}),
+		new web3._extend.Method({
+			name: 'dumpAddress',
+			call: 'debug_dumpAddress',
+			params: 2,
+			inputFormatter: [web3._extend.formatters.inputAddressFormatter, web3._extend.formatters.inputBlockNumberFormatter]
 		}),
 		new web3._extend.Method({
 			name: 'chaindbProperty',
@@ -495,6 +513,28 @@ web3._extend({
 	property: 'eth',
 	methods: [
 		new web3._extend.Method({
+			name: 'sendRawPrivateTransaction',
+			call: 'eth_sendRawPrivateTransaction',
+			params: 2,
+			inputFormatter: [null, null]
+		}),
+		new web3._extend.Method({
+			name: 'distributePrivateTransaction',
+			call: 'eth_distributePrivateTransaction',
+			params: 2,
+			inputFormatter: [null, null]
+		}),
+		new web3._extend.Method({
+			name: 'getPrivacyPrecompileAddress',
+			call: 'eth_getPrivacyPrecompileAddress',
+			params: 0,
+		}),
+		new web3._extend.Method({
+			name: 'getContractPrivacyMetadata',
+			call: 'eth_getContractPrivacyMetadata',
+			params: 1
+		}),
+		new web3._extend.Method({
 			name: 'chainId',
 			call: 'eth_chainId',
 			params: 0
@@ -584,6 +624,49 @@ web3._extend({
 			params: 2,
 			inputFormatter: [null, web3._extend.formatters.inputBlockNumberFormatter],
 		}),
+		// QUORUM
+		new web3._extend.Method({
+			name: 'sendTransactionAsync',
+			call: 'eth_sendTransactionAsync',
+			params: 1,
+			inputFormatter: [web3._extend.formatters.inputTransactionFormatter]
+		}),
+		new web3._extend.Method({
+			name: 'getQuorumPayload',
+			call: 'eth_getQuorumPayload',
+			params: 1,
+			inputFormatter: [null]
+		}),
+		new web3._extend.Method({
+			name: 'getQuorumPayloadExtra',
+			call: 'eth_getQuorumPayloadExtra',
+			params: 1,
+			inputFormatter: [null]
+		}),
+		new web3._extend.Method({
+			name: 'decryptQuorumPayload',
+			call: 'eth_decryptQuorumPayload',
+			params: 1,
+			inputFormatter: [null]
+		}),
+		new web3._extend.Method({
+			name: 'getPSI',
+			call: 'eth_getPSI',
+			params: 0
+		}),
+		new web3._extend.Method({
+            name: 'getPrivateTransaction',
+            call: 'eth_getPrivateTransactionByHash',
+            params: 1,
+            outputFormatter: web3._extend.formatters.outputTransactionFormatter
+        }),
+		new web3._extend.Method({
+            name: 'getPrivateTransactionReceipt',
+            call: 'eth_getPrivateTransactionReceipt',
+            params: 1,
+            outputFormatter: web3._extend.formatters.outputTransactionReceiptFormatter
+        }),
+		// END-QUORUM
 		new web3._extend.Method({
 			name: 'feeHistory',
 			call: 'eth_feeHistory',

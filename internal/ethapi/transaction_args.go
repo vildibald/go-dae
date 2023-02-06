@@ -21,6 +21,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/daefrom/go-dae/private"
+	"github.com/daefrom/go-dae/private/engine"
 	"math/big"
 
 	"github.com/daefrom/go-dae/common"
@@ -33,7 +35,12 @@ import (
 
 // TransactionArgs represents the arguments to construct a new transaction
 // or a message call.
+// Quorum: introducing additional arguments encapsulated in PrivateTxArgs struct
+//
+//	to support private transactions processing.
 type TransactionArgs struct {
+	PrivateTransactionArgs // Quorum
+
 	From                 *common.Address `json:"from"`
 	To                   *common.Address `json:"to"`
 	Gas                  *hexutil.Uint64 `json:"gas"`
@@ -52,6 +59,65 @@ type TransactionArgs struct {
 	// Introduced by AccessListTxType transaction.
 	AccessList *types.AccessList `json:"accessList,omitempty"`
 	ChainID    *hexutil.Big      `json:"chainId,omitempty"`
+}
+
+func (s TransactionArgs) IsPrivate() bool {
+	return s.PrivateFor != nil
+}
+
+// SendRawTransactionArgs represents the arguments to submit a new signed private transaction into the transaction pool.
+type SendRawTransactionArgs struct {
+	PrivateTransactionArgs
+}
+
+// PrivateTransactionArgs Additional arguments used in private transactions
+type PrivateTransactionArgs struct {
+	// PrivateFrom is the public key of the sending party.
+	// The public key must be available in the Private Transaction Manager (i.e.: Tessera) which is paired with this geth node.
+	// Empty value means the Private Transaction Manager will use the first public key
+	// in its list of available keys which it maintains.
+	PrivateFrom string `json:"privateFrom"`
+	// PrivateFor is the list of public keys which are available in the Private Transaction Managers in the network.
+	// The transaction payload is only visible to those party to the transaction.
+	PrivateFor          []string               `json:"privateFor"`
+	PrivateTxType       string                 `json:"restriction"`
+	PrivacyFlag         engine.PrivacyFlagType `json:"privacyFlag"`
+	MandatoryRecipients []string               `json:"mandatoryFor"`
+}
+
+func (args *PrivateTransactionArgs) SetDefaultPrivateFrom(ctx context.Context, b Backend) error {
+	if args.PrivateFor != nil && len(args.PrivateFrom) == 0 && b.ChainConfig().IsMPS {
+		psm, err := b.PSMR().ResolveForUserContext(ctx)
+		if err != nil {
+			return err
+		}
+		args.PrivateFrom = psm.Addresses[0]
+	}
+	return nil
+}
+
+func (args *PrivateTransactionArgs) SetRawTransactionPrivateFrom(ctx context.Context, b Backend, tx *types.Transaction) error {
+	if args.PrivateFor != nil && b.ChainConfig().IsMPS {
+		hash := common.BytesToEncryptedPayloadHash(tx.Data())
+		_, retrievedPrivateFrom, _, err := private.P.ReceiveRaw(hash)
+		if err != nil {
+			return err
+		}
+		if len(args.PrivateFrom) == 0 {
+			args.PrivateFrom = retrievedPrivateFrom
+		}
+		if args.PrivateFrom != retrievedPrivateFrom {
+			return fmt.Errorf("The PrivateFrom address retrieved from the privacy manager does not match private PrivateFrom (%s) specified in transaction arguments.", args.PrivateFrom)
+		}
+		psm, err := b.PSMR().ResolveForUserContext(ctx)
+		if err != nil {
+			return err
+		}
+		if psm.NotIncludeAny(args.PrivateFrom) {
+			return fmt.Errorf("The PrivateFrom address does not match the specified private state (%s)", psm.ID)
+		}
+	}
+	return nil
 }
 
 // from retrieves the transaction sender address.

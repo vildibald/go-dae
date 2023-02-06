@@ -94,6 +94,15 @@ type Backend interface {
 
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
+
+	// Quorum
+	CallTimeOut() time.Duration
+	// AccountExtraDataStateGetterByNumber returns state getter at a given block height
+	AccountExtraDataStateGetterByNumber(ctx context.Context, number rpc.BlockNumber) (vm.AccountExtraDataStateGetter, error)
+	PSMR() mps.PrivateStateMetadataResolver
+	SupportsMultitenancy(rpcCtx context.Context) (*proto.PreAuthenticatedAuthenticationToken, bool)
+	// IsPrivacyMarkerTransactionCreationEnabled returns true if privacy marker transactions are enabled and should be created
+	IsPrivacyMarkerTransactionCreationEnabled() bool
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {

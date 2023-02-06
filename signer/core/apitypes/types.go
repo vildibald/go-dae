@@ -64,7 +64,7 @@ func (vs *ValidationMessages) Info(msg string) {
 	vs.Messages = append(vs.Messages, ValidationInfo{INFO, msg})
 }
 
-/// getWarnings returns an error with all messages of type WARN of above, or nil if no warnings were present
+// / getWarnings returns an error with all messages of type WARN of above, or nil if no warnings were present
 func (v *ValidationMessages) GetWarnings() error {
 	var messages []string
 	for _, msg := range v.Messages {
@@ -81,7 +81,12 @@ func (v *ValidationMessages) GetWarnings() error {
 // SendTxArgs represents the arguments to submit a transaction
 // This struct is identical to ethapi.TransactionArgs, except for the usage of
 // common.MixedcaseAddress in From and To
+// Quorum: introducing additional arguments encapsulated in PrivateTxArgs struct
+//
+//	to support private transactions processing.
 type SendTxArgs struct {
+	PrivateTxArgs // Quorum
+
 	From                 common.MixedcaseAddress  `json:"from"`
 	To                   *common.MixedcaseAddress `json:"to"`
 	Gas                  hexutil.Uint64           `json:"gas"`
@@ -100,6 +105,10 @@ type SendTxArgs struct {
 	// For non-legacy transactions
 	AccessList *types.AccessList `json:"accessList,omitempty"`
 	ChainID    *hexutil.Big      `json:"chainId,omitempty"`
+}
+
+func (s SendTxArgs) IsPrivate() bool {
+	return s.PrivateFor != nil
 }
 
 func (args SendTxArgs) String() string {
@@ -166,6 +175,61 @@ func (args *SendTxArgs) ToTransaction() *types.Transaction {
 		}
 	}
 	return types.NewTx(data)
+}
+
+// SendRawTxArgs represents the arguments to submit a new signed private transaction into the transaction pool.
+type SendRawTxArgs struct {
+	PrivateTxArgs
+}
+
+// Additional arguments used in private transactions
+type PrivateTxArgs struct {
+	// PrivateFrom is the public key of the sending party.
+	// The public key must be available in the Private Transaction Manager (i.e.: Tessera) which is paired with this geth node.
+	// Empty value means the Private Transaction Manager will use the first public key
+	// in its list of available keys which it maintains.
+	PrivateFrom string `json:"privateFrom"`
+	// PrivateFor is the list of public keys which are available in the Private Transaction Managers in the network.
+	// The transaction payload is only visible to those party to the transaction.
+	PrivateFor          []string               `json:"privateFor"`
+	PrivateTxType       string                 `json:"restriction"`
+	PrivacyFlag         engine.PrivacyFlagType `json:"privacyFlag"`
+	MandatoryRecipients []string               `json:"mandatoryFor"`
+}
+
+func (args *PrivateTxArgs) SetDefaultPrivateFrom(ctx context.Context, b Backend) error {
+	if args.PrivateFor != nil && len(args.PrivateFrom) == 0 && b.ChainConfig().IsMPS {
+		psm, err := b.PSMR().ResolveForUserContext(ctx)
+		if err != nil {
+			return err
+		}
+		args.PrivateFrom = psm.Addresses[0]
+	}
+	return nil
+}
+
+func (args *PrivateTxArgs) SetRawTransactionPrivateFrom(ctx context.Context, b Backend, tx *types.Transaction) error {
+	if args.PrivateFor != nil && b.ChainConfig().IsMPS {
+		hash := common.BytesToEncryptedPayloadHash(tx.Data())
+		_, retrievedPrivateFrom, _, err := private.P.ReceiveRaw(hash)
+		if err != nil {
+			return err
+		}
+		if len(args.PrivateFrom) == 0 {
+			args.PrivateFrom = retrievedPrivateFrom
+		}
+		if args.PrivateFrom != retrievedPrivateFrom {
+			return fmt.Errorf("The PrivateFrom address retrieved from the privacy manager does not match private PrivateFrom (%s) specified in transaction arguments.", args.PrivateFrom)
+		}
+		psm, err := b.PSMR().ResolveForUserContext(ctx)
+		if err != nil {
+			return err
+		}
+		if psm.NotIncludeAny(args.PrivateFrom) {
+			return fmt.Errorf("The PrivateFrom address does not match the specified private state (%s)", psm.ID)
+		}
+	}
+	return nil
 }
 
 type SigFormat struct {

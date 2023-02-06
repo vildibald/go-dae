@@ -18,7 +18,9 @@ package params
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"github.com/daefrom/go-dae/common/math"
 	"math/big"
 
 	"github.com/daefrom/go-dae/common"
@@ -371,8 +373,30 @@ type ChainConfig struct {
 	TerminalTotalDifficulty *big.Int `json:"terminalTotalDifficulty,omitempty"`
 
 	// Various consensus engines
-	Ethash *EthashConfig `json:"ethash,omitempty"`
-	Clique *CliqueConfig `json:"clique,omitempty"`
+	Ethash   *EthashConfig   `json:"ethash,omitempty"`
+	Clique   *CliqueConfig   `json:"clique,omitempty"`
+	Istanbul *IstanbulConfig `json:"istanbul,omitempty"` // Quorum
+	IBFT     *IBFTConfig     `json:"ibft,omitempty"`     // Quorum
+	QBFT     *QBFTConfig     `json:"qbft,omitempty"`     // Quorum
+
+	// Start of Quorum specific configs
+
+	Transitions          []Transition `json:"transitions,omitempty"` // Quorum - transition config based on the block number
+	IsQuorum             bool         `json:"isQuorum"`              // Quorum flag
+	TransactionSizeLimit uint64       `json:"txnSizeLimit"`          // Quorum - transaction size limit
+	MaxCodeSize          uint64       `json:"maxCodeSize"`           // Quorum -  maximum CodeSize of contract
+
+	// QIP714Block implements the permissions related changes
+	QIP714Block            *big.Int `json:"qip714Block,omitempty"`
+	MaxCodeSizeChangeBlock *big.Int `json:"maxCodeSizeChangeBlock,omitempty"`
+	// to track multiple changes to maxCodeSize
+	MaxCodeSizeConfig        []MaxCodeConfigStruct `json:"maxCodeSizeConfig,omitempty"`
+	PrivacyEnhancementsBlock *big.Int              `json:"privacyEnhancementsBlock,omitempty"`
+	IsMPS                    bool                  `json:"isMPS"`                            // multiple private states flag
+	PrivacyPrecompileBlock   *big.Int              `json:"privacyPrecompileBlock,omitempty"` // Switch block to enable privacy precompiled contract to process privacy marker transactions
+	EnableGasPriceBlock      *big.Int              `json:"enableGasPriceBlock,omitempty"`    // Switch block to enable usage of gas price
+
+	// End of Quorum specific configs
 }
 
 // EthashConfig is the consensus engine configs for proof-of-work based sealing.
@@ -385,13 +409,89 @@ func (c *EthashConfig) String() string {
 
 // CliqueConfig is the consensus engine configs for proof-of-authority based sealing.
 type CliqueConfig struct {
-	Period uint64 `json:"period"` // Number of seconds between blocks to enforce
-	Epoch  uint64 `json:"epoch"`  // Epoch length to reset votes and checkpoint
+	Period                 uint64 `json:"period"`                 // Number of seconds between blocks to enforce
+	Epoch                  uint64 `json:"epoch"`                  // Epoch length to reset votes and checkpoint
+	AllowedFutureBlockTime uint64 `json:"allowedFutureBlockTime"` // Max time (in seconds) from current time allowed for blocks, before they're considered future blocks
 }
 
 // String implements the stringer interface, returning the consensus engine details.
 func (c *CliqueConfig) String() string {
 	return "clique"
+}
+
+// IstanbulConfig is the consensus engine configs for Istanbul based sealing.
+type IstanbulConfig struct {
+	Epoch          uint64   `json:"epoch"`                    // Epoch length to reset votes and checkpoint
+	ProposerPolicy uint64   `json:"policy"`                   // The policy for proposer selection
+	Ceil2Nby3Block *big.Int `json:"ceil2Nby3Block,omitempty"` // Number of confirmations required to move from one state to next [2F + 1 to Ceil(2N/3)]
+	TestQBFTBlock  *big.Int `json:"testQBFTBlock,omitempty"`  // Fork block at which block confirmations are done using qbft consensus instead of ibft
+}
+
+// String implements the stringer interface, returning the consensus engine details.
+func (c *IstanbulConfig) String() string {
+	return "istanbul"
+}
+
+type BFTConfig struct {
+	EpochLength              uint64         `json:"epochlength"`                       // Number of blocks that should pass before pending validator votes are reset
+	BlockPeriodSeconds       uint64         `json:"blockperiodseconds"`                // Minimum time between two consecutive IBFT or QBFT blocks’ timestamps in seconds
+	EmptyBlockPeriodSeconds  *uint64        `json:"emptyblockperiodseconds,omitempty"` // Minimum time between two consecutive IBFT or QBFT a block and empty block’ timestamps in seconds
+	RequestTimeoutSeconds    uint64         `json:"requesttimeoutseconds"`             // Minimum request timeout for each IBFT or QBFT round in milliseconds
+	ProposerPolicy           uint64         `json:"policy"`                            // The policy for proposer selection
+	Ceil2Nby3Block           *big.Int       `json:"ceil2Nby3Block,omitempty"`          // Number of confirmations required to move from one state to next [2F + 1 to Ceil(2N/3)]
+	ValidatorContractAddress common.Address `json:"validatorcontractaddress"`          // Smart contract address for list of validators
+}
+
+type IBFTConfig struct {
+	*BFTConfig
+}
+
+func (c IBFTConfig) String() string {
+	return "istanbul"
+}
+
+type QBFTConfig struct {
+	*BFTConfig
+	BlockReward            *math.HexOrDecimal256 `json:"blockReward,omitempty"`            // Reward from start, works only on QBFT consensus protocol
+	BeneficiaryMode        *string               `json:"beneficiaryMode,omitempty"`        // Mode for setting the beneficiary, either: list, besu, validators (beneficiary list is the list of validators)
+	MiningBeneficiary      *common.Address       `json:"miningBeneficiary,omitempty"`      // Wallet address that benefits at every new block (besu mode)
+	ValidatorSelectionMode *string               `json:"validatorselectionmode,omitempty"` // Select model for validators
+	Validators             []common.Address      `json:"validators"`                       // Validators list
+}
+
+func (c QBFTConfig) String() string {
+	return QBFT
+}
+
+const (
+	IBFT = "ibft"
+	QBFT = "qbft"
+
+	ContractMode    = "contract"
+	BlockHeaderMode = "blockheader"
+)
+
+type Transition struct {
+	Block                        *big.Int              `json:"block"`
+	Algorithm                    string                `json:"algorithm,omitempty"`
+	EpochLength                  uint64                `json:"epochlength,omitempty"`                  // Number of blocks that should pass before pending validator votes are reset
+	BlockPeriodSeconds           uint64                `json:"blockperiodseconds,omitempty"`           // Minimum time between two consecutive IBFT or QBFT blocks’ timestamps in seconds
+	EmptyBlockPeriodSeconds      *uint64               `json:"emptyblockperiodseconds,omitempty"`      // Minimum time between two consecutive IBFT or QBFT a block and empty block’ timestamps in seconds
+	RequestTimeoutSeconds        uint64                `json:"requesttimeoutseconds,omitempty"`        // Minimum request timeout for each IBFT or QBFT round in milliseconds
+	ContractSizeLimit            uint64                `json:"contractsizelimit,omitempty"`            // Maximum smart contract code size
+	ValidatorContractAddress     common.Address        `json:"validatorcontractaddress"`               // Smart contract address for list of validators
+	Validators                   []common.Address      `json:"validators"`                             // List of validators
+	ValidatorSelectionMode       string                `json:"validatorselectionmode,omitempty"`       // Validator selection mode to switch to
+	EnhancedPermissioningEnabled *bool                 `json:"enhancedPermissioningEnabled,omitempty"` // aka QIP714Block
+	PrivacyEnhancementsEnabled   *bool                 `json:"privacyEnhancementsEnabled,omitempty"`   // privacy enhancements (mandatory party, private state validation)
+	PrivacyPrecompileEnabled     *bool                 `json:"privacyPrecompileEnabled,omitempty"`     // enable marker transactions support
+	GasPriceEnabled              *bool                 `json:"gasPriceEnabled,omitempty"`              // enable gas price
+	MinerGasLimit                uint64                `json:"miner.gaslimit,omitempty"`               // Gas Limit
+	TwoFPlusOneEnabled           *bool                 `json:"2FPlus1Enabled,omitempty"`               // Ceil(2N/3) is the default you need to explicitly use 2F + 1
+	TransactionSizeLimit         uint64                `json:"transactionSizeLimit,omitempty"`         // Modify TransactionSizeLimit
+	BlockReward                  *math.HexOrDecimal256 `json:"blockReward,omitempty"`                  // validation rewards
+	BeneficiaryMode              *string               `json:"beneficiaryMode,omitempty"`              // Mode for setting the beneficiary, either: list, besu, validators (beneficiary list is the list of validators)
+	MiningBeneficiary            *common.Address       `json:"miningBeneficiary,omitempty"`            // Wallet address that benefits at every new block (besu mode)
 }
 
 // String implements the fmt.Stringer interface.
@@ -467,6 +567,20 @@ func (c *ChainConfig) String() string {
 		banner += fmt.Sprintf(" - Merge netsplit block:      %-8v", c.MergeNetsplitBlock)
 	}
 	return banner
+}
+
+// Quorum - validate code size and transaction size limit
+func (c *ChainConfig) IsValid() error {
+
+	if c.TransactionSizeLimit < 32 || c.TransactionSizeLimit > 128 {
+		return errors.New("Genesis transaction size limit must be between 32 and 128")
+	}
+
+	if c.MaxCodeSize != 0 && (c.MaxCodeSize < 24 || c.MaxCodeSize > 128) {
+		return errors.New("Genesis max code size must be between 24 and 128")
+	}
+
+	return nil
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.

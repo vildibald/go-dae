@@ -255,37 +255,59 @@ func NewDebugAPI(eth *Ethereum) *DebugAPI {
 }
 
 // DumpBlock retrieves the entire state of the database at a given block.
-func (api *DebugAPI) DumpBlock(blockNr rpc.BlockNumber) (state.Dump, error) {
-	opts := &state.DumpConfig{
-		OnlyWithAddresses: true,
-		Max:               AccountRangeMaxResults, // Sanity limit over RPC
+// Quorum adds an additional parameter to support private state dump
+func (api *DebugAPI) DumpBlock(blockNr rpc.BlockNumber, typ *string) (state.Dump, error) {
+	publicState, privateState, err := api.getStateDbsFromBlockNumber(blockNr)
+	if err != nil {
+		return state.Dump{}, err
 	}
+
+	if typ != nil && *typ == "private" {
+		return privateState.RawDump(false, false, true), nil
+	}
+	return publicState.RawDump(false, false, true), nil
+}
+
+func (api *DebugAPI) PrivateStateRoot(ctx context.Context, blockNr rpc.BlockNumber) (common.Hash, error) {
+	_, privateState, err := api.getStateDbsFromBlockNumber(ctx, blockNr)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return privateState.IntermediateRoot(true), nil
+}
+
+func (api *DebugAPI) DefaultStateRoot(ctx context.Context, blockNr rpc.BlockNumber) (common.Hash, error) {
+	psm, err := api.eth.blockchain.PrivateStateManager().StateRepository(api.eth.blockchain.CurrentBlock().Hash())
+	if err != nil {
+		return common.Hash{}, err
+	}
+	defaultPSM := psm.DefaultStateMetadata()
+
+	var privateState *state.StateDB
 	if blockNr == rpc.PendingBlockNumber {
 		// If we're dumping the pending state, we need to request
 		// both the pending block as well as the pending state from
 		// the miner and operate on those
-		_, stateDb := api.eth.miner.Pending()
-		return stateDb.RawDump(opts), nil
+		_, _, privateState = api.eth.miner.Pending(defaultPSM.ID)
+		// this is a copy of the private state so it is OK to do IntermediateRoot
+		return privateState.IntermediateRoot(true), nil
 	}
 	var block *types.Block
 	if blockNr == rpc.LatestBlockNumber {
 		block = api.eth.blockchain.CurrentBlock()
-	} else if blockNr == rpc.FinalizedBlockNumber {
-		block = api.eth.blockchain.CurrentFinalizedBlock()
-	} else if blockNr == rpc.SafeBlockNumber {
-		block = api.eth.blockchain.CurrentSafeBlock()
 	} else {
 		block = api.eth.blockchain.GetBlockByNumber(uint64(blockNr))
 	}
 	if block == nil {
-		return state.Dump{}, fmt.Errorf("block #%d not found", blockNr)
+		return common.Hash{}, fmt.Errorf("block #%d not found", blockNr)
 	}
-	stateDb, err := api.eth.BlockChain().StateAt(block.Root())
+	_, privateState, err = api.eth.BlockChain().StateAtPSI(block.Root(), defaultPSM.ID)
 	if err != nil {
-		return state.Dump{}, err
+		return common.Hash{}, err
 	}
-	return stateDb.RawDump(opts), nil
+	return privateState.IntermediateRoot(true), nil
 }
+
 
 // Preimage is a debug API function that returns the preimage for a sha3 hash, if known.
 func (api *DebugAPI) Preimage(ctx context.Context, hash common.Hash) (hexutil.Bytes, error) {
@@ -587,4 +609,48 @@ func (api *DebugAPI) GetAccessibleState(from, to rpc.BlockNumber) (uint64, error
 		}
 	}
 	return 0, fmt.Errorf("no state found")
+}
+
+/ DumpAddress retrieves the state of an address at a given block.
+// Quorum adds an additional parameter to support private state dump
+func (api *DebugAPI) DumpAddress(address common.Address, blockNr rpc.BlockNumber) (state.DumpAccount, error) {
+	publicState, privateState, err := api.getStateDbsFromBlockNumber(blockNr)
+	if err != nil {
+		return state.DumpAccount{}, err
+	}
+
+	if accountDump, ok := privateState.DumpAddress(address); ok {
+		return accountDump, nil
+	}
+	if accountDump, ok := publicState.DumpAddress(address); ok {
+		return accountDump, nil
+	}
+	return state.DumpAccount{}, errors.New("error retrieving state")
+}
+
+//Taken from DumpBlock, as it was reused in DumpAddress.
+//Contains modifications from the original to return the private state db, as well as public.
+func (api *DebugAPI) getStateDbsFromBlockNumber(ctx context.Context, blockNr rpc.BlockNumber) (*state.StateDB, *state.StateDB, error) {
+	psm, err := api.eth.blockchain.PrivateStateManager().ResolveForUserContext(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if blockNr == rpc.PendingBlockNumber {
+		// If we're dumping the pending state, we need to request
+		// both the pending block as well as the pending state from
+		// the miner and operate on those
+		_, publicState, privateState := api.eth.miner.Pending(psm.ID)
+		return publicState, privateState, nil
+	}
+
+	var block *types.Block
+	if blockNr == rpc.LatestBlockNumber {
+		block = api.eth.blockchain.CurrentBlock()
+	} else {
+		block = api.eth.blockchain.GetBlockByNumber(uint64(blockNr))
+	}
+	if block == nil {
+		return nil, nil, fmt.Errorf("block #%d not found", blockNr)
+	}
+	return api.eth.BlockChain().StateAtPSI(block.Root(), psm.ID)
 }
